@@ -1,0 +1,37 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'sixteen250/deepseek-harness-atlas' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Merge upstream main into the fork
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/merge-upstream" -f branch=main --jq '.message'
+
+      - name: Publish the current commit if needed
+        run: |
+          repo="repos/$GITHUB_REPOSITORY"
+          head=$(gh api "$repo/git/ref/heads/main" --jq '.object.sha')
+          runs="$repo/actions/workflows/pages.yml/runs?branch=main&head_sha=$head&per_page=1"
+          covered=$(gh api "$runs" --jq 'any(.workflow_runs[]; .status != "completed" or .conclusion == "success")')
+          if [[ "$covered" == "true" ]]; then
+            echo "Pages is already publishing or has published $head."
+          else
+            # Changes made with GITHUB_TOKEN do not trigger a push workflow.
+            gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
+          fi
